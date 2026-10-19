@@ -21,7 +21,6 @@ final class BigClockPage extends Page {
         if (night)
             bottom += (bottom.length() > 0 ? "   ·   " : "") + S.get("night");
         text(c, bottom, x.W / 2, x.H - 30, 28, false, GRAY, C);
-        if (x.battery >= 0 && x.battery <= 20)
-            text(c, x.battery + "%", x.W - 16, 26, 22, false, GRAY, R);
+        battery(c, x, x.W - 16, 26);
     }
 }

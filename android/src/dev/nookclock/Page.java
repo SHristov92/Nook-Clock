@@ -111,8 +111,28 @@ abstract class Page {
         if (x.status != null)
             left += "  " + x.status;
         text(c, left, 16, 26, 22, false, GRAY, L);
-        if (x.battery >= 0)
-            text(c, (x.charging ? S.get("charging") + " " : "") + x.battery + "%", x.W - 16, 26, 22, false, GRAY, R);
+        if (x.charging && x.battery >= 0)
+            text(c, S.get("charging") + " " + x.battery + "%", x.W - 16, 26, 22, false, GRAY, R);
+        else
+            battery(c, x, x.W - 16, 26);
+    }
+
+    /**
+     * Battery icon (outline + fill level) with the percentage to its left,
+     * right-aligned at `right` on baseline y. Shown only while discharging;
+     * at 15% or less the text turns bold black.
+     */
+    static void battery(Canvas c, Ctx x, float right, float y) {
+        if (x.battery < 0 || x.charging)
+            return;
+        boolean low = x.battery <= 15;
+        int col = low ? BLACK : GRAY;
+        float w = 34, h = 17, top = y - h + 1, left = right - w - 4;
+        frame(c, left, top, left + w, top + h, col, 2);
+        rect(c, left + w, top + 5, left + w + 4, top + h - 5, col);        // terminal
+        float fillW = (w - 6) * Math.min(100, x.battery) / 100f;
+        rect(c, left + 3, top + 3, left + 3 + Math.max(fillW, 2), top + h - 3, col);
+        text(c, x.battery + "%", left - 8, y, 22, low, col, R);
     }
 
     /** Page title with a rule below; returns the y where content starts. */
