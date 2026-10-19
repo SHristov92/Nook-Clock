@@ -105,3 +105,28 @@ Can only be checked on the real Nook (each one has a fallback):
 * [Terence Eden: rooting the Nook](https://shkspr.mobi/blog/2013/05/rooting-the-nook/): NookManager.
 * [nookDevs: Nook Simple Touch](https://nookdevs.com/Nook_Simple_Touch): ADB over Wi-Fi.
 * [Open-Meteo forecast API](https://open-meteo.com/en/docs): free, no API key, works over `http://`.
+
+## Android app (branch `android-app`)
+
+`android/` is the same display as a normal Android 2.1 app that registers as a
+**home screen**, so the B&N UI keeps running:
+
+* The NST's **n** button sends B&N's `com.bn.intent.action.home`, not
+  MAIN/HOME, so the app registers both. Pick **Clock** in the chooser and tick
+  "use by default".
+* **n while the clock is showing** opens a picker of the other home apps (B&N
+  Home, ReLaunch, Android launcher). **n from anywhere else** returns to the clock.
+* **Tap** = full refresh + weather update. A flashing full refresh runs every
+  30 min through `su` (approve the Superuser prompt once).
+* Time uses the forecast location's timezone (Open-Meteo), because the Nook's
+  own setting defaulted to Europe/London.
+
+Build without Gradle: `android/build.sh` uses the JDK, build-tools and
+android-7 platform in `toolchain/`. It uses legacy `aapt`, because aapt2
+writes UTF-8 string pools that Android 2.1 rejects. Then:
+
+```sh
+adb connect 192.168.100.6:5555
+adb install -r android/build/nookclock.apk
+python3 tools/nookshot.py shot.png     # screenshot of the e-ink framebuffer
+```
