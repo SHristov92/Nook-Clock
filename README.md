@@ -1,132 +1,139 @@
-# nookclock: Nook Simple Touch clock + weather display
+# Nook Clock
 
-Turns a rooted Nook Simple Touch (NST, Android 2.1, 600×800 e-ink) into a
-wall clock with current weather and a 4-day forecast.
+Turns a rooted **Nook Simple Touch** (NST, Android 2.1, 600×800 e-ink) into a
+wall clock with current weather and a 4-day forecast. Weather comes from
+[Open-Meteo](https://open-meteo.com), which is free and needs no API key.
 
 ![landscape](build/landscape.png)
 
-## How it works
+There are two versions with the same layout:
 
-```
- Open-Meteo (plain HTTP, no key) ──► nookclock (static ARM binary on the Nook)
-                                         │  own DNS client (no resolv.conf on Android 2.1)
-                                         │  fonts + icons baked in (no libs)
-                                         ▼
-                              /dev/graphics/fb0  ──► e-ink
-                              zero-length write = quick update
-                              /sys/class/graphics/fb0/epd_refresh = full flash refresh
-```
+| | **Android app** (`android/`) | **Native framebuffer** (`src/`) |
+|---|---|---|
+| how it runs | normal app, registered as a home screen | static ARM binary, Android UI stopped |
+| switching | **n** button → picker: Clock / Home / ReLaunch | `adb` only (`nookclock.sh stop`) or reboot |
+| e-ink updates | Android's partial updates + full flash every 30 min via `su` | direct fb0 writes + `epd_refresh` |
+| needs | Android 2.1 (API 7), Superuser approval | root over adb |
 
-* **One static binary** (musl, ARMv7, soft-float, non-PIE, ~1.5 MB). It needs
-  nothing from Android, so the old bionic libc and 2.6.29 kernel don't matter.
-* **The Android UI is stopped** (`stop` = kill zygote) so nothing paints over
-  the clock. A kernel wakelock keeps the CPU and Wi-Fi awake.
-  `nookclock.sh stop`, or a reboot, brings the B&N UI back. Nothing is
-  installed into `/system`, so a reboot always returns the Nook to stock.
-* **Refresh policy:** a quick non-flashing update every minute and a full
-  flashing refresh every `full_every` minutes (default 30) to clear ghosting.
-  Pressing a page-turn button forces a full refresh and a weather update.
-* **Weather:** fetched every 15 min. On failure it retries every 2 min, and
-  after 3 h without data it shows "stale". Local time and DST come from
-  Open-Meteo's `utc_offset_seconds`, so no timezone database is needed.
-* **Clock drift:** with the B&N UI stopped nothing syncs the clock, so it is
-  corrected from the weather server's HTTP `Date` header (`sync_time = 1`).
-* **Plain HTTP only:** the NST's TLS stack can't talk to modern servers,
-  which is why Open-Meteo is used over `http://`.
+The **Android app is the recommended version**. The native one is a minimal
+"kiosk" mode that frees all resources.
 
-## Layout
+---
 
-| path | what |
-|---|---|
-| `src/nookclock.c` | the whole program: config, rendering, fb output, DNS/HTTP, JSON, main loop |
-| `tools/genassets.py` | rasterises DejaVu fonts + draws weather icons into `src/assets.h` |
-| `device/nookclock.sh` | on-device control script (`start`/`stop`/`restart`/`status`/`probe`) |
-| `device/nookclock.conf` | location, units, rotation, refresh intervals |
-| `deploy.sh` | push over ADB-over-Wi-Fi and restart |
-| `test/sample.json` | saved Open-Meteo response for offline previews |
+## Android app
 
-## Build
+### Install and register as the n-button home
+
+1. On the Nook, turn on **wireless debugging** (ADB over Wi-Fi, port 5555).
+2. Run:
+   ```sh
+   android/install.sh 192.168.100.6          # build if needed, install, start, open chooser
+   ```
+3. On the Nook's chooser pick **Clock** and tick **"Use by default for this action"**.
+4. Verify:
+   ```sh
+   android/install.sh 192.168.100.6 check
+   ```
+5. The first full refresh asks for root: choose **Allow** and **Remember** in Superuser.
+
+`android/install.sh <ip> remove` uninstalls the app, and **n** goes back to B&N Home / ReLaunch.
+
+### Using it
+
+* **n from any app** → the clock.
+* **n while the clock is showing** → picker of every home app (Clock, B&N
+  Home, ReLaunch, Android launcher).
+* **Tap the clock** → full (flashing) refresh, plus a weather update if the
+  data is more than a minute old.
+* The screen stays on while the clock is in front, so keep the Nook plugged in.
+
+### Settings
+
+Settings are constants at the top of `android/src/dev/nookclock/ClockActivity.java`:
+`LAT`, `LON`, `PLACE`, `IMPERIAL`, the weather interval and the full-refresh
+interval. Orientation is set in `AndroidManifest.xml` (`screenOrientation="landscape"`).
+
+### NST quirks the app handles
+
+* The **n** button sends B&N's `com.bn.intent.action.home`, not Android's
+  MAIN/HOME, so the app registers both. The picker launches each home app
+  through whichever of the two it answers.
+* The Nook's timezone defaults to **Europe/London**. The clock uses the
+  forecast location's timezone from Open-Meteo instead.
+* The Nook's TLS can't reach modern servers, so weather is fetched over plain `http://`.
+
+### Build
+
+No Gradle. `android/build.sh` uses bare SDK tools from `toolchain/`, which is gitignored:
 
 ```sh
-# toolchain (already downloaded into ./toolchain):
-#   curl -O https://musl.cc/arm-linux-musleabi-cross.tgz && tar xzf ... -C toolchain
-make            # build/nookclock (ARM) + build/nookclock-host (PC preview)
-make preview    # build/landscape.pgm + build/portrait.pgm from test/sample.json
-build/nookclock-host -c device/nookclock.conf --preview out.pgm   # live data
+cd toolchain
+curl -fLo jdk.tgz "https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jdk/hotspot/normal/eclipse"
+mkdir jdk && tar xzf jdk.tgz -C jdk --strip-components=1
+curl -fLO https://dl.google.com/android/repository/build-tools_r34-linux.zip && unzip build-tools_r34-linux.zip && mv android-14 build-tools
+curl -fLO https://dl.google.com/android/repository/android-2.1_r03.zip && unzip android-2.1_r03.zip && mv android-2.1_r03-linux android-7
+cd .. && android/build.sh          # -> android/build/nookclock.apk
 ```
 
-Needs `python3-pil` (system `/usr/bin/python3`; override with `make PYTHON=...`).
+* The build uses **legacy `aapt`**, not aapt2. Android 2.1 can only read
+  UTF-16 resource string pools, and an aapt2-built APK fails to install with
+  `INSTALL_PARSE_FAILED_UNEXPECTED_EXCEPTION` ("Bad string block").
+* `javac` compiles against the API 7 `android.jar`, so newer APIs fail at
+  build time, not on the device.
+* `d8 --min-api 7` produces dex 035. The APK is v1-signed (SHA-1) with
+  `~/.android/debug.keystore`, which is created if missing.
 
-## Deploy
+---
 
-1. Edit `device/nookclock.conf`: set `lat`, `lon`, `place` and `rotate`.
-2. On the Nook, make sure Wi-Fi is on and ADB over Wi-Fi is enabled (port 5555).
-3. Run:
-   ```sh
-   sudo apt install adb
-   ./deploy.sh <nook-ip> probe     # first time: check what the device looks like
-   ./deploy.sh <nook-ip>           # push + start
-   ./deploy.sh <nook-ip> status    # running? + log
-   ./deploy.sh <nook-ip> stop      # back to the B&N UI
-   ```
+## Native framebuffer version
 
-## Verified so far / to verify on the device
+A static musl ARMv7 binary that draws straight into `/dev/graphics/fb0`. It
+does its own DNS, because Android 2.1 has no `resolv.conf`, and has fonts and
+icons baked in. `nookclock.sh start` stops the Android UI (zygote) and holds a
+wakelock. Wi-Fi keeps working because `wpa_supplicant` and `dhcpcd` are
+started by init.
 
-Verified on the PC:
+```sh
+make                 # build/nookclock (ARM, needs toolchain/arm-linux-musleabi-cross from musl.cc)
+make preview         # PC previews from test/sample.json
+./deploy.sh 192.168.100.6            # push + start (B&N UI is stopped)
+./deploy.sh 192.168.100.6 status     # running? + log
+./deploy.sh 192.168.100.6 stop       # B&N UI back (a reboot also restores it)
+```
 
-* The ARM binary runs under qemu (`-cpu cortex-a8`, uname 2.6.29). It fetches
-  live weather and renders the same image as the host build.
-* Custom DNS, HTTP, JSON parsing and both orientations work.
+Settings live in `device/nookclock.conf`: location, units, `rotate`, refresh intervals.
 
-Can only be checked on the real Nook (each one has a fallback):
+On the device: the quick update (a zero-length write to fb0) refreshes
+without flashing, `epd_refresh` does the full flash, and the clock is
+corrected from the HTTP `Date` header.
 
-| risk | check | fallback |
-|---|---|---|
-| framebuffer format / yoffset | log line `fb 600x800 16bpp ...` | code handles 8/16/32 bpp and yoffset |
-| quick update not triggered by the zero-length write | clock doesn't change until a full refresh | set `full_every = 1` |
-| Wi-Fi drops after `stop` (system_server gone) | log shows `DNS lookup ... failed` | start with `KEEP_UI=1`, or restart wpa_supplicant/dhcpcd manually |
-| `adb shell` not root | `probe` → `id` | run `su -c "sh .../nookclock.sh start"` |
-| battery path | top-right shows `%` | it's skipped silently if missing |
+---
 
-## Possible next steps
+## Tools
 
-* Autostart at boot (hook into `init.rc` / `install-recovery.sh`). Do this
-  only after it has run stable for a few days.
-* Nightly deep-refresh / dim schedule, indoor sensor, Cyrillic day names
-  (add the glyphs to `ASCII` in `genassets.py`).
+| | |
+|---|---|
+| `tools/genassets.py` | renders weather icons (and fonts for the native build). `--android <dir>` writes the app's PNGs, `--preview <png>` a contact sheet |
+| `tools/nookshot.py` | screenshot of the e-ink framebuffer over adb (`python3 tools/nookshot.py shot.png`) |
+
+Use the system `/usr/bin/python3` with `python3-pil`.
+
+## Repository layout
+
+```
+android/            Android app: manifest, Java sources, icons, build.sh, install.sh
+src/nookclock.c     native version (single file)
+device/             native version's on-device script + config
+tools/              asset generator, screenshot tool
+test/sample.json    saved Open-Meteo response for offline previews
+```
 
 ## References
 
 * [badd10de: Nook Simple Touch notes](https://badd10de.dev/notes/nook-simple-touch.html):
-  fb0 is RGB565, a zero-length write triggers an update, `epd_refresh`, `stop`
-  to kill Dalvik, and why old toolchains matter.
-* [Terence Eden: old Nook as an information screen (2020)](https://shkspr.mobi/blog/2020/02/turn-an-old-ereader-into-an-information-screen-nook-str):
-  the Electric Sign approach, and the fact that only plain HTTP works.
+  fb0 format, update via a zero-length write, `epd_refresh`, stopping Dalvik.
+* [Terence Eden: old Nook as an information screen](https://shkspr.mobi/blog/2020/02/turn-an-old-ereader-into-an-information-screen-nook-str):
+  the plain-HTTP limitation, and the Electric Sign approach.
 * [Terence Eden: rooting the Nook](https://shkspr.mobi/blog/2013/05/rooting-the-nook/): NookManager.
-* [nookDevs: Nook Simple Touch](https://nookdevs.com/Nook_Simple_Touch): ADB over Wi-Fi.
-* [Open-Meteo forecast API](https://open-meteo.com/en/docs): free, no API key, works over `http://`.
-
-## Android app (branch `android-app`)
-
-`android/` is the same display as a normal Android 2.1 app that registers as a
-**home screen**, so the B&N UI keeps running:
-
-* The NST's **n** button sends B&N's `com.bn.intent.action.home`, not
-  MAIN/HOME, so the app registers both. Pick **Clock** in the chooser and tick
-  "use by default".
-* **n while the clock is showing** opens a picker of the other home apps (B&N
-  Home, ReLaunch, Android launcher). **n from anywhere else** returns to the clock.
-* **Tap** = full refresh + weather update. A flashing full refresh runs every
-  30 min through `su` (approve the Superuser prompt once).
-* Time uses the forecast location's timezone (Open-Meteo), because the Nook's
-  own setting defaulted to Europe/London.
-
-Build without Gradle: `android/build.sh` uses the JDK, build-tools and
-android-7 platform in `toolchain/`. It uses legacy `aapt`, because aapt2
-writes UTF-8 string pools that Android 2.1 rejects. Then:
-
-```sh
-adb connect 192.168.100.6:5555
-adb install -r android/build/nookclock.apk
-python3 tools/nookshot.py shot.png     # screenshot of the e-ink framebuffer
-```
+* [nookDevs: Nook Simple Touch](https://nookdevs.com/Nook_Simple_Touch).
+* [Open-Meteo forecast API](https://open-meteo.com/en/docs).
