@@ -36,6 +36,9 @@ The **Android app is the recommended version**. The native one is a minimal
    ```
 5. The first full refresh asks for root: choose **Allow** and **Remember** in Superuser.
 
+Android 2.1 **forgets the default home whenever the app is updated**. After
+every reinstall, `install.sh` opens the chooser again; pick Clock and tick the box.
+
 `android/install.sh <ip> remove` uninstalls the app, and **n** goes back to B&N Home / ReLaunch.
 
 ### Screens
