@@ -38,20 +38,52 @@ The **Android app is the recommended version**. The native one is a minimal
 
 `android/install.sh <ip> remove` uninstalls the app, and **n** goes back to B&N Home / ReLaunch.
 
-### Using it
+### Screens
 
-* **n from any app** → the clock.
-* **n while the clock is showing** → picker of every home app (Clock, B&N
-  Home, ReLaunch, Android launcher).
-* **Tap the clock** → full (flashing) refresh, plus a weather update if the
-  data is more than a minute old.
-* The screen stays on while the clock is in front, so keep the Nook plugged in.
+| | |
+|---|---|
+| **Clock & weather** | big clock, date, current conditions, 4-day forecast |
+| **Hourly** | next 24 h: temperature curve with icons, rain-chance bars, total rain, max wind |
+| **Air quality** | European AQI, PM2.5 / PM10 / NO₂ / O₃ bars (tick = WHO 24-h guideline), pollen, 24-h AQI |
+| **Calendar** | month grid (Monday first), Bulgarian public holidays and transferred days off, name days |
+| **Big clock** | time and date only; also the night-mode screen |
+
+Holidays follow Orthodox Easter. A fixed holiday that falls on a weekend moves
+the day off to the next working day (Labour Code art. 154). The name-day list
+covers the major ones; in English they are romanised.
+
+### Controls
+
+| | |
+|---|---|
+| page buttons / swipe left-right | next / previous screen (each change does one full e-ink flash) |
+| tap | refresh, and fetch new weather if the data is over a minute old |
+| long press (or Menu) | settings |
+| **n** on the clock | picker: Clock / B&N Home / ReLaunch / Settings |
+| **n** elsewhere | back to the clock |
+| Back | back to the main clock screen (a home screen never closes) |
+
+After *auto-return* minutes without input (default 10), it goes back to the clock.
 
 ### Settings
 
-Settings are constants at the top of `android/src/dev/nookclock/ClockActivity.java`:
-`LAT`, `LON`, `PLACE`, `IMPERIAL`, the weather interval and the full-refresh
-interval. Orientation is set in `AndroidManifest.xml` (`screenOrientation="landscape"`).
+Settings are on the device (long press). They cover language (Български /
+English), location search (Open-Meteo geocoding), units, 24-hour clock, which
+screens are on, auto-return, full-refresh interval, and night mode with its
+hours.
+
+### Night mode
+
+E-ink has no backlight to dim, and the BNRV300 has no GlowLight, so night mode
+is about being **quiet** rather than dark. Between *night starts* and *night
+ends* (default 23:00–07:00), after 2 idle minutes:
+
+* the big-clock screen is shown;
+* it redraws only every 10 minutes;
+* there are no flashing full refreshes;
+* no weather or air data is downloaded.
+
+Touching it still works normally, and it goes back to the night screen 2 minutes later.
 
 ### NST quirks the app handles
 

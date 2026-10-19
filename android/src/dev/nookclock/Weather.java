@@ -4,13 +4,17 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.Calendar;
+import java.util.GregorianCalendar;
+import java.util.SimpleTimeZone;
+import java.util.TimeZone;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-/** Current conditions + daily forecast from Open-Meteo (plain HTTP, no key). */
+/** Current conditions, 24 h hourly and 5-day forecast from Open-Meteo (plain HTTP, no key). */
 final class Weather {
-    static final int DAYS = 5;
+    static final int DAYS = 5, HOURS = 25;
 
     long fetched;
     String timezone;        // e.g. "Europe/Sofia"
@@ -20,30 +24,39 @@ final class Weather {
     final int[] dayYear = new int[DAYS], dayMonth = new int[DAYS], dayOfMonth = new int[DAYS];
     final int[] dayCode = new int[DAYS], dayPop = new int[DAYS];
     final double[] dayMax = new double[DAYS], dayMin = new double[DAYS];
+    int hours;              // valid hourly entries, starting with the current hour
+    final int[] hourOfDay = new int[HOURS], hourCode = new int[HOURS], hourPop = new int[HOURS];
+    final int[] hourIsDay = new int[HOURS];
+    final double[] hourTemp = new double[HOURS], hourPrecip = new double[HOURS], hourWind = new double[HOURS];
 
-    /** Blocking; call off the UI thread. The NST's TLS can't reach modern servers, hence http. */
-    static Weather fetch(String lat, String lon, boolean imperial) throws Exception {
-        String url = "http://api.open-meteo.com/v1/forecast?latitude=" + lat + "&longitude=" + lon
-                + "&current=temperature_2m,relative_humidity_2m,apparent_temperature,"
-                + "is_day,weather_code,wind_speed_10m"
-                + "&daily=weather_code,temperature_2m_max,temperature_2m_min,"
-                + "precipitation_probability_max&timezone=auto&forecast_days=" + DAYS
-                + (imperial ? "&temperature_unit=fahrenheit&wind_speed_unit=mph" : "");
+    /** Blocking GET; the NST's TLS can't reach modern servers, hence http. */
+    static String get(String url) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         c.setConnectTimeout(15000);
         c.setReadTimeout(15000);
         try {
             if (c.getResponseCode() != 200)
-                throw new Exception("HTTP " + c.getResponseCode());
+                throw new Exception("HTTP " + c.getResponseCode() + " for " + url);
             InputStream in = c.getInputStream();
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             byte[] buf = new byte[4096];
             for (int n; (n = in.read(buf)) > 0; )
                 out.write(buf, 0, n);
-            return parse(out.toString("UTF-8"));
+            return out.toString("UTF-8");
         } finally {
             c.disconnect();
         }
+    }
+
+    static Weather fetch(Prefs p) throws Exception {
+        return parse(get("http://api.open-meteo.com/v1/forecast?latitude=" + p.lat + "&longitude=" + p.lon
+                + "&current=temperature_2m,relative_humidity_2m,apparent_temperature,"
+                + "is_day,weather_code,wind_speed_10m"
+                + "&hourly=temperature_2m,precipitation_probability,precipitation,weather_code,"
+                + "wind_speed_10m,is_day&forecast_hours=" + HOURS
+                + "&daily=weather_code,temperature_2m_max,temperature_2m_min,"
+                + "precipitation_probability_max&timezone=auto&forecast_days=" + DAYS
+                + (p.imperial ? "&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch" : "")));
     }
 
     static Weather parse(String json) throws Exception {
@@ -68,56 +81,56 @@ final class Weather {
             w.dayOfMonth[i] = Integer.parseInt(ymd[2]);
             w.dayCode[i] = optInt(daily, "weather_code", i, -1);
             w.dayPop[i] = optInt(daily, "precipitation_probability_max", i, -1);
-            w.dayMax[i] = daily.getJSONArray("temperature_2m_max").optDouble(i, Double.NaN);
-            w.dayMin[i] = daily.getJSONArray("temperature_2m_min").optDouble(i, Double.NaN);
+            w.dayMax[i] = optDouble(daily, "temperature_2m_max", i);
+            w.dayMin[i] = optDouble(daily, "temperature_2m_min", i);
+        }
+
+        JSONObject hourly = root.optJSONObject("hourly");
+        if (hourly != null) {
+            JSONArray ht = hourly.getJSONArray("time");
+            for (int i = 0; i < HOURS && i < ht.length(); i++) {
+                String s = ht.getString(i);           // "2026-10-20T01:00"
+                w.hourOfDay[i] = Integer.parseInt(s.substring(11, 13));
+                w.hourTemp[i] = optDouble(hourly, "temperature_2m", i);
+                w.hourPrecip[i] = optDouble(hourly, "precipitation", i);
+                w.hourWind[i] = optDouble(hourly, "wind_speed_10m", i);
+                w.hourPop[i] = optInt(hourly, "precipitation_probability", i, -1);
+                w.hourCode[i] = optInt(hourly, "weather_code", i, -1);
+                w.hourIsDay[i] = optInt(hourly, "is_day", i, 1);
+                w.hours = i + 1;
+            }
         }
         w.fetched = System.currentTimeMillis();
         return w;
+    }
+
+    static int optInt(JSONObject o, String key, int i, int def) {
+        JSONArray a = o.optJSONArray(key);
+        return a == null || i >= a.length() || a.isNull(i) ? def : a.optInt(i, def);
+    }
+
+    static double optDouble(JSONObject o, String key, int i) {
+        JSONArray a = o.optJSONArray(key);
+        return a == null || i >= a.length() || a.isNull(i) ? Double.NaN : a.optDouble(i, Double.NaN);
     }
 
     /**
      * The location's timezone. The Nook's own setting is often wrong (stock
      * firmware defaults to Europe/London), so trust the weather service.
      */
-    java.util.TimeZone zone() {
-        java.util.TimeZone tz = timezone == null ? null : java.util.TimeZone.getTimeZone(timezone);
+    TimeZone zone() {
+        TimeZone tz = timezone == null ? null : TimeZone.getTimeZone(timezone);
         if (tz == null || !tz.getID().equals(timezone))
-            tz = new java.util.SimpleTimeZone(utcOffset * 1000, "UTC" + utcOffset / 3600);
+            tz = new SimpleTimeZone(utcOffset * 1000, "UTC" + utcOffset / 3600);
         return tz;
     }
 
-    private static int optInt(JSONObject o, String key, int i, int def) {
-        JSONArray a = o.optJSONArray(key);
-        return a == null || a.isNull(i) ? def : a.optInt(i, def);
+    /** Day of week (Calendar.SUNDAY..) of forecast day i. */
+    int dayOfWeek(int i) {
+        return new GregorianCalendar(dayYear[i], dayMonth[i] - 1, dayOfMonth[i]).get(Calendar.DAY_OF_WEEK);
     }
 
-    static String describe(int c) {
-        switch (c) {
-        case 0: return "Clear";
-        case 1: return "Mostly clear";
-        case 2: return "Partly cloudy";
-        case 3: return "Overcast";
-        case 45: case 48: return "Fog";
-        case 51: case 53: case 55: return "Drizzle";
-        case 56: case 57: return "Freezing drizzle";
-        case 61: return "Light rain";
-        case 63: return "Rain";
-        case 65: return "Heavy rain";
-        case 66: case 67: return "Freezing rain";
-        case 71: return "Light snow";
-        case 73: return "Snow";
-        case 75: return "Heavy snow";
-        case 77: return "Snow grains";
-        case 80: case 81: return "Showers";
-        case 82: return "Heavy showers";
-        case 85: case 86: return "Snow showers";
-        case 95: return "Thunderstorm";
-        case 96: case 99: return "Thunder & hail";
-        default: return "Unknown";
-        }
-    }
-
-    /** Index into ClockView's icon table (same order as tools/genassets.py ICON_NAMES). */
+    /** Index into the icon table (same order as tools/genassets.py ICON_NAMES). */
     static int icon(int c, boolean day) {
         if (c <= 1) return day ? 0 : 1;
         if (c == 2) return day ? 2 : 3;
