@@ -97,6 +97,31 @@ Touching it still works normally, and it goes back to the night screen 2 minutes
   forecast location's timezone from Open-Meteo instead.
 * The Nook's TLS can't reach modern servers, so weather is fetched over plain `http://`.
 
+### Download / releases
+
+GitHub Actions (`.github/workflows/android.yml`) builds the APK on every
+push and pull request:
+
+* **Any build:** open the repo's **Actions** tab, pick the run, and download
+  the `nookclock-<version>.apk` artifact (it's a zip with the APK inside).
+* **Release:** push a version tag and the workflow creates a GitHub Release
+  with the APK attached:
+  ```sh
+  git tag -a v1.1 -m "Nook Clock 1.1"
+  git push origin v1.1
+  ```
+  The release appears under **Releases** with auto-generated notes.
+
+Install a downloaded APK with `adb install -r nookclock-v1.1.apk`, or
+`android/install.sh`, which also re-registers the n button.
+
+The version code is the git commit count, so it always grows. The version
+name is `git describe`, e.g. `v1.1`, or `v1.1-3-gabc1234` for builds after
+the tag. CI signs with the `KEYSTORE_B64` secret (base64 of
+`~/.android/debug.keystore`), so CI builds install as updates over local ones.
+Without the secret, CI uses a throwaway key and an existing install has to be
+removed first.
+
 ### Build
 
 No Gradle. `android/build.sh` uses bare SDK tools from `toolchain/`, which is gitignored:

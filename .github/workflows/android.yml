@@ -1,0 +1,81 @@
+# Builds the Nook Clock APK on every push / PR (downloadable as a workflow
+# artifact) and publishes a GitHub Release with the APK for tags "v*".
+name: Android APK
+
+on:
+  push:
+    branches: [main, android-app]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write          # needed to create releases
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history + tags: version code/name come from git
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Cache Android SDK pieces
+        id: sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: sdk
+          key: sdk-build-tools-34-android-7
+
+      - name: Download build-tools 34 and the Android 2.1 (API 7) platform
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p sdk && cd sdk
+          curl -fsSLO https://dl.google.com/android/repository/build-tools_r34-linux.zip
+          curl -fsSLO https://dl.google.com/android/repository/android-2.1_r03.zip
+          unzip -q build-tools_r34-linux.zip && mv android-14 build-tools
+          unzip -q android-2.1_r03.zip && mv android-2.1_r03-linux android-7
+          rm *.zip
+
+      # Sign with the same key as the APKs already on the device, otherwise
+      # Android refuses to update. Falls back to a throwaway key if unset.
+      - name: Signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          else
+            echo "::warning::KEYSTORE_B64 secret not set - signing with a throwaway key (APK won't update an existing install)"
+            keytool -genkeypair -keystore "$RUNNER_TEMP/release.keystore" -storepass android -keypass android \
+              -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          fi
+          echo "KEYSTORE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+
+      - name: Build
+        env:
+          BUILD_TOOLS: ${{ github.workspace }}/sdk/build-tools
+          ANDROID_JAR: ${{ github.workspace }}/sdk/android-7/android.jar
+          KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS || 'android' }}
+        run: |
+          android/build.sh
+          VERSION=$(git describe --tags --always)
+          cp android/build/nookclock.apk "nookclock-$VERSION.apk"
+          echo "APK=nookclock-$VERSION.apk" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APK }}
+          path: ${{ env.APK }}
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "$APK" --title "Nook Clock $GITHUB_REF_NAME" --generate-notes
