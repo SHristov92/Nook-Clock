@@ -1,0 +1,4 @@
+toolchain/
+build/*
+!build/landscape.png
+!build/portrait.png
