@@ -22,7 +22,8 @@ export ANDROID_SERIAL=$NOOK
 adb get-state >/dev/null 2>&1 || { echo "cannot reach $NOOK - is wireless debugging on?"; exit 1; }
 
 is_default() {
-	adb shell "grep -A40 '<preferred-activities' /data/system/packages.xml" | grep -q "$PKG"
+	adb shell "sed -n '/<preferred-activities/,/<\/preferred-activities>/p' /data/system/packages.xml" |
+		grep "<item name=\"$PKG/" | grep -q .
 }
 
 case "$CMD" in
